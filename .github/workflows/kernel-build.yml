@@ -232,7 +232,7 @@ jobs:
             fi
           fi
 
-          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_susfs${SUSFSTAG}-280925"
+          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_susfs${SUSFSTAG}-280925.zip"
 
           echo "Resolved:"
           echo "  VERSION.PATCHLEVEL = ${VERSION}.${PATCHLEVEL}"
@@ -251,6 +251,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           # IMPORTANT: do NOT end artifact name with ".zip" to avoid "file.zip.zip"
-          name: anykernel-${{ github.run_number }}
+          name: action_build-${{ github.run_number }}
           path: ${{ steps.package.outputs.zip_path }}
           if-no-files-found: error
+          
+      - name: Upload to GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: run-${{ github.run_id }}
+          name: "Kernel Build ${{ github.run_number }}"
+          files: ${{ steps.package.outputs.zip_path }}
