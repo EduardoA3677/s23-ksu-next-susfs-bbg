@@ -23,6 +23,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+
     steps:
       - name: Checkout this repo (patches/workflow only)
         uses: actions/checkout@v4
@@ -56,13 +57,15 @@ jobs:
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 16
-          
+
       - name: Configure ccache
         run: |
           set -euxo pipefail
-          mkdir -p ~/.ccache # <-- ensure folder exists
-          echo 'max_size = 5.0G' | tee ~/.ccache/ccache.conf
-          echo 'compression = true' | tee -a ~/.ccache/ccache.conf
+          mkdir -p ~/.ccache
+          {
+            echo 'max_size = 5.0G'
+            echo 'compression = true'
+          } | tee ~/.ccache/ccache.conf
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -102,13 +105,8 @@ jobs:
           set -euxo pipefail
           git clone -b "${SUSFS_BRANCH}" --depth=1 "${SUSFS_REPO}" susfs4ksu
           cd kernel
-
-          # Copy kernel_patches content (verbose & recursive as requested)
-         
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/ || true
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/ || true
-
-       
 
       - name: Apply your local adjustments
         working-directory: work/kernel
@@ -134,7 +132,6 @@ jobs:
         run: |
           set -euxo pipefail
           git status --porcelain=v1
-          # diff can be very long; show a summary
           (git diff --stat || true)
 
       - name: Build kernel (scripts/build.sh)
@@ -154,14 +151,71 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/out_artifacts"
-          # Common kernel outputs — tweak to match your build.sh output layout
           find . -maxdepth 5 -type f \( -name "*Image*" -o -name "*.gz" \) -print -exec cp -v {} "$GITHUB_WORKSPACE/out_artifacts/" \; || true
           echo "found=$(ls -1 "$GITHUB_WORKSPACE/out_artifacts" | wc -l)" >> $GITHUB_OUTPUT
 
-      - name: Upload artifacts
+      - name: Upload artifacts (raw outputs)
         if: steps.collect.outputs.found != '0'
         uses: actions/upload-artifact@v4
         with:
           name: kernel-build-${{ github.run_number }}
           path: out_artifacts
           if-no-files-found: warn
+
+      # -------- AnyKernel3 packaging starts here --------
+
+      - name: Prepare AnyKernel3 template
+        working-directory: work
+        run: |
+          set -euxo pipefail
+          if [[ -d "${GITHUB_WORKSPACE}/anykernel" ]]; then
+            rsync -a --delete "${GITHUB_WORKSPACE}/anykernel/" anykernel/
+          else
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          fi
+          ls -la anykernel
+
+      - name: Copy build outputs into AnyKernel
+        run: |
+          set -euxo pipefail
+          shopt -s nullglob
+          dest="$GITHUB_WORKSPACE/work/anykernel"
+          src="$GITHUB_WORKSPACE/out_artifacts"
+          mkdir -p "$dest"
+          # Copy anything we found (Image, Image.gz, Image.gz-dtb, etc.)
+          for f in "$src"/*; do
+            cp -v "$f" "$dest"/
+          done
+
+      - name: Edit anykernel.sh (kernel.string)
+        working-directory: work/anykernel
+        run: |
+          set -euxo pipefail
+          # Replace kernel.string if present; otherwise append it.
+          if grep -qE '^kernel\.string=' anykernel.sh; then
+            sed -i -E 's|^kernel\.string=.*|kernel.string="A kernel for S23 QCOM Series by edgarscirulis @ xda-developers and compiled with ksu-next_susfs by Rezoss"|' anykernel.sh
+          else
+            printf '\nkernel.string="A kernel for S23 QCOM Series by edgarscirulis @ xda-developers and compiled with ksu-next_susfs by Rezoss"\n' >> anykernel.sh
+          fi
+          echo "Updated kernel.string:"
+          grep -E '^kernel\.string=' anykernel.sh || true
+
+      - name: Package kernel with AnyKernel3
+        id: package
+        working-directory: work/anykernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ZIP_NAME="S23_Kernel_${GITHUB_RUN_NUMBER}_$(date +%d%m%y).zip"
+          # Zip *contents* of anykernel dir to avoid nested folder in zip
+          (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
+          echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Created: ${ZIP_NAME}"
+
+      - name: Upload AnyKernel zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.zip_name }}
+          path: ${{ steps.package.outputs.zip_path }}
+          if-no-files-found: error
