@@ -1,0 +1,167 @@
+name: Build kernel from patches
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/kernel-build.yml"
+      - "rezoss_susfs1.5.10.patch"
+
+env:
+  KERNEL_REPO: https://github.com/samsung-sm8550/kernel_samsung_sm8550-common.git
+  KERNEL_BRANCH: android13-5.15
+  KSU_SETUP: https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh
+  KSU_VARIANT: next-susfs-a13-5.15-dev
+  SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
+  SUSFS_BRANCH: gki-android13-5.15
+  HOOK_PATCH_URL: https://github.com/WildKernels/kernel_patches/raw/f2227a36f02adf3776fc9d432734faf04787f3fa/next/scope_min_manual_hooks_v1.4.patch
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout this repo (patches/workflow only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Show workspace contents (debug)
+        run: |
+          set -euxo pipefail
+          ls -la
+
+      - name: Set timezone
+        run: sudo timedatectl set-timezone Europe/Warsaw
+        continue-on-error: true
+
+      - name: Setup dependencies
+        run: |
+          sudo apt update
+          sudo apt upgrade -y
+          sudo apt install -y \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git git-lfs gnupg \
+            gperf imagemagick lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libsdl1.2-dev libssl-dev \
+            libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            openjdk-11-jdk pahole dwarves cpio python3 \
+            python-is-python3 tar perl wget lz4 make
+
+      - name: Setup swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+          
+      - name: Configure ccache
+        run: |
+          set -euxo pipefail
+          mkdir -p ~/.ccache # <-- ensure folder exists
+          echo 'max_size = 5.0G' | tee ~/.ccache/ccache.conf
+          echo 'compression = true' | tee -a ~/.ccache/ccache.conf
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('rezoss_susfs1.5.10.patch') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Prepare build workspace
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/work"
+          cd "$GITHUB_WORKSPACE/work"
+          git config --global init.defaultBranch main
+          git config --global advice.detachedHead false
+
+      - name: Clone kernel source
+        working-directory: work
+        run: |
+          set -euxo pipefail
+          git clone -b "${KERNEL_BRANCH}" --depth=1 "${KERNEL_REPO}" kernel
+          cd kernel
+          git rev-parse --short HEAD
+
+      - name: Integrate KernelSU-Next
+        working-directory: work/kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -LSs "${KSU_SETUP}" | bash -s "${KSU_VARIANT}"
+
+      - name: Fetch susfs4ksu and apply base patch
+        working-directory: work
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone -b "${SUSFS_BRANCH}" --depth=1 "${SUSFS_REPO}" susfs4ksu
+          cd kernel
+
+          # Copy kernel_patches content (verbose & recursive as requested)
+         
+          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/ || true
+          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/ || true
+
+       
+
+      - name: Apply your local adjustments
+        working-directory: work/kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [[ -f "${GITHUB_WORKSPACE}/rezoss_susfs1.5.10.patch" ]]; then
+            patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1.5.10.patch"
+          else
+            echo "rezoss_susfs1.5.10.patch not found in repo root; skipping." >&2
+          fi
+
+      - name: Apply Manual Hook patch
+        working-directory: work/kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L -o manual-hook.patch "${HOOK_PATCH_URL}"
+          patch -p1 --fuzz=3 < manual-hook.patch
+
+      - name: Show final diff (for traceability)
+        working-directory: work/kernel
+        run: |
+          set -euxo pipefail
+          git status --porcelain=v1
+          # diff can be very long; show a summary
+          (git diff --stat || true)
+
+      - name: Build kernel (scripts/build.sh)
+        working-directory: work/kernel
+        shell: bash
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+          CC: ccache clang
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/build.sh
+          ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Collect build outputs
+        id: collect
+        working-directory: work/kernel
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out_artifacts"
+          # Common kernel outputs — tweak to match your build.sh output layout
+          find . -maxdepth 5 -type f \( -name "*Image*" -o -name "*.gz" \) -print -exec cp -v {} "$GITHUB_WORKSPACE/out_artifacts/" \; || true
+          echo "found=$(ls -1 "$GITHUB_WORKSPACE/out_artifacts" | wc -l)" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts
+        if: steps.collect.outputs.found != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-${{ github.run_number }}
+          path: out_artifacts
+          if-no-files-found: warn
