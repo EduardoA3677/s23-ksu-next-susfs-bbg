@@ -153,15 +153,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/out_artifacts"
           find . -maxdepth 5 -type f \( -name "Image.gz" \) -print -exec cp -v {} "$GITHUB_WORKSPACE/out_artifacts/" \; || true
           echo "found=$(ls -1 "$GITHUB_WORKSPACE/out_artifacts" | wc -l)" >> $GITHUB_OUTPUT
-
-      - name: Upload artifacts (raw outputs)
-        if: steps.collect.outputs.found != '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-build-${{ github.run_number }}
-          path: out_artifacts
-          if-no-files-found: warn
-
+      
       # -------- AnyKernel3 packaging starts here --------
 
       - name: Prepare AnyKernel3 template
@@ -200,7 +192,7 @@ jobs:
           echo "Updated kernel.string:"
           grep -E '^kernel\.string=' anykernel.sh || true
 
-      - name: Package kernel with AnyKernel3 (conventioned name)
+      - name: Package kernel with AnyKernel3
         id: package
         shell: bash
         run: |
@@ -214,32 +206,35 @@ jobs:
           PATCHLEVEL="$(awk -F'= *' '/^PATCHLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
           SUBLEVEL="$(awk -F'= *' '/^SUBLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
 
-          # --- KernelSU-Next tag/commit ---
-          NEXT_TAG="$(git -C "$KERNEL_DIR/KernelSU-Next" describe --tags --always 2>/dev/null || echo HEAD)"
-          NEXT_TAG="${NEXT_TAG#v}"   # drop leading v if present
+          # --- KernelSU-Next: get pure tag (e.g., 1.1.1), no "-NN-gSHA"
+          (git -C "$KERNEL_DIR/KernelSU-Next" fetch --tags --force --prune || true)
+          if NEXT_PURE="$(git -C "$KERNEL_DIR/KernelSU-Next" describe --tags --abbrev=0 2>/dev/null)"; then
+            NEXT_TAG="$NEXT_PURE"
+          else
+            NEXT_RAW="$(git -C "$KERNEL_DIR/KernelSU-Next" describe --tags --always 2>/dev/null || echo HEAD)"
+            NEXT_TAG="${NEXT_RAW%%-*}"  # cut off "-NN-gSHA" if present
+          fi
+          NEXT_TAG="${NEXT_TAG#v}"  # drop leading "v"
 
-          # --- SUSFS version: try from local patch name, else from susfs4ksu repo ---
+          # --- SUSFS version (prefer from local patch name, else repo tag/sha)
           SUSFSTAG="unknown"
           if ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch >/dev/null 2>&1; then
-            # pick first match and extract digits+dots after 'susfs'
             P="$(ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch | head -n1)"
-            SUSFSTAG="$(grep -oE 'susfs[0-9]+(\.[0-9]+)*' <<<"$(basename "$P")" | sed 's/^susfs//')"
+            SUSFSTAG="$(basename "$P" | grep -oE 'susfs[0-9]+(\.[0-9]+)*' | sed 's/^susfs//')"
           fi
           if [[ -z "${SUSFSTAG}" || "${SUSFSTAG}" == "unknown" ]]; then
             if [[ -d "$GITHUB_WORKSPACE/work/susfs4ksu/.git" ]]; then
-              SUSFSTAG="$(git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --always 2>/dev/null || echo unknown)"
+              (git -C "$GITHUB_WORKSPACE/work/susfs4ksu" fetch --tags --force --prune || true)
+              SUSFSTAG="$(git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --abbrev=0 2>/dev/null || \
+                          git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --always 2>/dev/null || echo unknown)"
               SUSFSTAG="${SUSFSTAG#v}"
+              SUSFSTAG="${SUSFSTAG%%-*}"  # trim "-NN-gSHA" if any
             fi
           fi
 
-          # --- Sanitize for filesystem (no slashes/spaces) ---
-          sanitize() { sed -E 's|[^A-Za-z0-9._-]+|_|g'; }
-          SAFE_NEXT_TAG="$(echo -n "$NEXT_TAG" | sanitize)"
-          SAFE_SUSFSTAG="$(echo -n "$SUSFSTAG" | sanitize)"
+          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_susfs${SUSFSTAG}-280925"
 
-          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${SAFE_NEXT_TAG}_susfs${SAFE_SUSFSTAG}.zip"
-
-          echo "Resolved naming:"
+          echo "Resolved:"
           echo "  VERSION.PATCHLEVEL = ${VERSION}.${PATCHLEVEL}"
           echo "  SUBLEVEL           = ${SUBLEVEL}"
           echo "  NEXT_TAG           = ${NEXT_TAG}"
@@ -247,14 +242,15 @@ jobs:
           echo "  ZIP_NAME           = ${ZIP_NAME}"
 
           cd "$AK_DIR"
-          # zip the *contents* to avoid a nested 'anykernel/' folder in the zip
+          # zip the *contents* (no nested anykernel/ folder)
           (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
           echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload AnyKernel zip
+      - name: Upload AnyKernel zip (artifact container)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.zip_name }}
+          # IMPORTANT: do NOT end artifact name with ".zip" to avoid "file.zip.zip"
+          name: anykernel-${{ github.run_number }}
           path: ${{ steps.package.outputs.zip_path }}
           if-no-files-found: error
