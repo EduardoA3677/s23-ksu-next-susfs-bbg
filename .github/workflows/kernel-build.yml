@@ -98,6 +98,38 @@ jobs:
           set -euxo pipefail
           curl -LSs "${KSU_SETUP}" | bash -s "${KSU_VARIANT}"
 
+      - name: Resolve KernelSU-Next TAG and VERSION CODE
+        working-directory: work/kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KSU_DIR="KernelSU-Next"
+
+          # Make sure we have tags and full history for accurate counting
+          (git -C "$KSU_DIR" fetch --tags --force --prune || true)
+          if git -C "$KSU_DIR" rev-parse --is-shallow-repository | grep -q true; then
+            git -C "$KSU_DIR" fetch --unshallow || git -C "$KSU_DIR" fetch --deepen=10000 || true
+          fi
+
+          # Get pure tag (no "-NN-gSHA"), then drop leading 'v'
+          if NEXT_PURE="$(git -C "$KSU_DIR" describe --tags --abbrev=0 2>/dev/null)"; then
+            NEXT_TAG="$NEXT_PURE"
+          else
+            NEXT_RAW="$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || echo HEAD)"
+            NEXT_TAG="${NEXT_RAW%%-*}"
+          fi
+          NEXT_TAG="${NEXT_TAG#v}"
+
+          # Compute version code = commit count + 10200 (same scheme as KernelSU CI)
+          COMMITS="$(git -C "$KSU_DIR" rev-list --count HEAD || echo 0)"
+          NEXT_VER_CODE=$((10200 + COMMITS))
+
+          echo "NEXT_TAG=$NEXT_TAG"       >> "$GITHUB_ENV"
+          echo "NEXT_VER_CODE=$NEXT_VER_CODE" >> "$GITHUB_ENV"
+
+          echo "Resolved NEXT_TAG=$NEXT_TAG, NEXT_VER_CODE=$NEXT_VER_CODE"
+
+
       - name: Fetch susfs4ksu and apply base patch
         working-directory: work
         shell: bash
@@ -201,51 +233,34 @@ jobs:
           KERNEL_DIR="$GITHUB_WORKSPACE/work/kernel"
           AK_DIR="$GITHUB_WORKSPACE/work/anykernel"
 
-          # --- Extract version info from kernel Makefile ---
           VERSION="$(awk -F'= *' '/^VERSION[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
           PATCHLEVEL="$(awk -F'= *' '/^PATCHLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
           SUBLEVEL="$(awk -F'= *' '/^SUBLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
 
-          # --- KernelSU-Next: get pure tag (e.g., 1.1.1), no "-NN-gSHA"
-          (git -C "$KERNEL_DIR/KernelSU-Next" fetch --tags --force --prune || true)
-          if NEXT_PURE="$(git -C "$KERNEL_DIR/KernelSU-Next" describe --tags --abbrev=0 2>/dev/null)"; then
-            NEXT_TAG="$NEXT_PURE"
-          else
-            NEXT_RAW="$(git -C "$KERNEL_DIR/KernelSU-Next" describe --tags --always 2>/dev/null || echo HEAD)"
-            NEXT_TAG="${NEXT_RAW%%-*}"  # cut off "-NN-gSHA" if present
-          fi
-          NEXT_TAG="${NEXT_TAG#v}"  # drop leading "v"
-
-          # --- SUSFS version (prefer from local patch name, else repo tag/sha)
+          # Resolve SUSFSTAG as before (from local patch name or repo)
           SUSFSTAG="unknown"
           if ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch >/dev/null 2>&1; then
             P="$(ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch | head -n1)"
             SUSFSTAG="$(basename "$P" | grep -oE 'susfs[0-9]+(\.[0-9]+)*' | sed 's/^susfs//')"
           fi
-          if [[ -z "${SUSFSTAG}" || "${SUSFSTAG}" == "unknown" ]]; then
+          if [[ -z "$SUSFSTAG" || "$SUSFSTAG" == "unknown" ]]; then
             if [[ -d "$GITHUB_WORKSPACE/work/susfs4ksu/.git" ]]; then
               (git -C "$GITHUB_WORKSPACE/work/susfs4ksu" fetch --tags --force --prune || true)
               SUSFSTAG="$(git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --abbrev=0 2>/dev/null || \
                           git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --always 2>/dev/null || echo unknown)"
               SUSFSTAG="${SUSFSTAG#v}"
-              SUSFSTAG="${SUSFSTAG%%-*}"  # trim "-NN-gSHA" if any
+              SUSFSTAG="${SUSFSTAG%%-*}"
             fi
           fi
 
-          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_susfs${SUSFSTAG}-280925.zip"
-
-          echo "Resolved:"
-          echo "  VERSION.PATCHLEVEL = ${VERSION}.${PATCHLEVEL}"
-          echo "  SUBLEVEL           = ${SUBLEVEL}"
-          echo "  NEXT_TAG           = ${NEXT_TAG}"
-          echo "  SUSFSTAG           = ${SUSFSTAG}"
-          echo "  ZIP_NAME           = ${ZIP_NAME}"
+          # Build final name: common-5.15-191_next1.1.1_ver12869_susfs1.5.10.zip
+          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_v${NEXT_VER_CODE}_susfs${SUSFSTAG}.zip"
 
           cd "$AK_DIR"
-          # zip the *contents* (no nested anykernel/ folder)
           (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
           echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
 
       - name: Upload AnyKernel zip (artifact container)
         uses: actions/upload-artifact@v4
