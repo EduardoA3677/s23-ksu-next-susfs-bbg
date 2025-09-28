@@ -151,7 +151,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/out_artifacts"
-          find . -maxdepth 5 -type f \( -name "*Image*" -o -name "*.gz" \) -print -exec cp -v {} "$GITHUB_WORKSPACE/out_artifacts/" \; || true
+          find . -maxdepth 5 -type f \( -name "Image.gz" \) -print -exec cp -v {} "$GITHUB_WORKSPACE/out_artifacts/" \; || true
           echo "found=$(ls -1 "$GITHUB_WORKSPACE/out_artifacts" | wc -l)" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts (raw outputs)
@@ -200,18 +200,57 @@ jobs:
           echo "Updated kernel.string:"
           grep -E '^kernel\.string=' anykernel.sh || true
 
-      - name: Package kernel with AnyKernel3
+      - name: Package kernel with AnyKernel3 (conventioned name)
         id: package
-        working-directory: work/anykernel
         shell: bash
         run: |
           set -euxo pipefail
-          ZIP_NAME="S23_Kernel_${GITHUB_RUN_NUMBER}_$(date +%d%m%y).zip"
-          # Zip *contents* of anykernel dir to avoid nested folder in zip
+
+          KERNEL_DIR="$GITHUB_WORKSPACE/work/kernel"
+          AK_DIR="$GITHUB_WORKSPACE/work/anykernel"
+
+          # --- Extract version info from kernel Makefile ---
+          VERSION="$(awk -F'= *' '/^VERSION[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
+          PATCHLEVEL="$(awk -F'= *' '/^PATCHLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
+          SUBLEVEL="$(awk -F'= *' '/^SUBLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
+
+          # --- KernelSU-Next tag/commit ---
+          NEXT_TAG="$(git -C "$KERNEL_DIR/KernelSU-Next" describe --tags --always 2>/dev/null || echo HEAD)"
+          NEXT_TAG="${NEXT_TAG#v}"   # drop leading v if present
+
+          # --- SUSFS version: try from local patch name, else from susfs4ksu repo ---
+          SUSFSTAG="unknown"
+          if ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch >/dev/null 2>&1; then
+            # pick first match and extract digits+dots after 'susfs'
+            P="$(ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch | head -n1)"
+            SUSFSTAG="$(grep -oE 'susfs[0-9]+(\.[0-9]+)*' <<<"$(basename "$P")" | sed 's/^susfs//')"
+          fi
+          if [[ -z "${SUSFSTAG}" || "${SUSFSTAG}" == "unknown" ]]; then
+            if [[ -d "$GITHUB_WORKSPACE/work/susfs4ksu/.git" ]]; then
+              SUSFSTAG="$(git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --always 2>/dev/null || echo unknown)"
+              SUSFSTAG="${SUSFSTAG#v}"
+            fi
+          fi
+
+          # --- Sanitize for filesystem (no slashes/spaces) ---
+          sanitize() { sed -E 's|[^A-Za-z0-9._-]+|_|g'; }
+          SAFE_NEXT_TAG="$(echo -n "$NEXT_TAG" | sanitize)"
+          SAFE_SUSFSTAG="$(echo -n "$SUSFSTAG" | sanitize)"
+
+          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${SAFE_NEXT_TAG}_susfs${SAFE_SUSFSTAG}.zip"
+
+          echo "Resolved naming:"
+          echo "  VERSION.PATCHLEVEL = ${VERSION}.${PATCHLEVEL}"
+          echo "  SUBLEVEL           = ${SUBLEVEL}"
+          echo "  NEXT_TAG           = ${NEXT_TAG}"
+          echo "  SUSFSTAG           = ${SUSFSTAG}"
+          echo "  ZIP_NAME           = ${ZIP_NAME}"
+
+          cd "$AK_DIR"
+          # zip the *contents* to avoid a nested 'anykernel/' folder in the zip
           (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
           echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Created: ${ZIP_NAME}"
 
       - name: Upload AnyKernel zip
         uses: actions/upload-artifact@v4
