@@ -11,7 +11,7 @@ env:
   KERNEL_REPO: https://github.com/samsung-sm8550/kernel_samsung_sm8550-common.git
   KERNEL_BRANCH: android13-5.15
   KSU_SETUP: https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh
-  KSU_VARIANT: next-susfs-a13-5.15-dev
+  KSU_VARIANT: next
   SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
   SUSFS_BRANCH: gki-android13-5.15
   HOOK_PATCH_URL: https://github.com/WildKernels/kernel_patches/raw/f2227a36f02adf3776fc9d432734faf04787f3fa/next/scope_min_manual_hooks_v1.4.patch
