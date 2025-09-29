@@ -1,12 +1,14 @@
 name: Build kernel from patches
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'  # Runs every day at 04:00 UTC
+  workflow_dispatch:       # Allow manual trigger if needed
   push:
     paths:
       - ".github/workflows/kernel-build.yml"
       - "rezoss_susfs1.5.10.patch"
-
+  
 env:
   KERNEL_REPO: https://github.com/samsung-sm8550/kernel_samsung_sm8550-common.git
   KERNEL_BRANCH: android13-5.15
@@ -18,7 +20,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
 
 jobs:
-  build:
+  check-and-build:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -26,6 +28,39 @@ jobs:
       id-token: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for new commits
+        id: check_changes
+        run: |
+          git fetch origin main
+          LATEST_LOCAL=$(git rev-parse HEAD)
+          LATEST_REMOTE=$(git rev-parse origin/main)
+
+          echo "Latest local:  $LATEST_LOCAL"
+          echo "Latest remote: $LATEST_REMOTE"
+
+          if [ "$LATEST_LOCAL" = "$LATEST_REMOTE" ]; then
+            echo "No new commits detected. Aborting workflow."
+            echo "changed=false" >> $GITHUB_ENV
+            exit 0
+          else
+            echo "New commits found. Proceeding with build."
+            echo "changed=true" >> $GITHUB_ENV
+          fi
+
+      - name: Stop job if no changes
+        if: env.changed == 'false'
+        run: |
+          echo "No changes, stopping workflow..."
+          exit 0
+
+      - name: Build kernel
+        if: env.changed == 'true'
+        run: |
+          echo "There's change let's building kernel..."
+          
       - name: Checkout this repo (patches/workflow only)
         uses: actions/checkout@v4
         with:
