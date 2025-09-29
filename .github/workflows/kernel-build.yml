@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/kernel-build.yml"
       - "rezoss_susfs1.5.10.patch"
+      - "anykernel.sh"
   
 env:
   KERNEL_REPO: https://github.com/samsung-sm8550/kernel_samsung_sm8550-common.git
@@ -251,19 +252,7 @@ jobs:
           for f in "$src"/*; do
             cp -v "$f" "$dest"/
           done
-
-      - name: Edit anykernel.sh (kernel.string)
-        working-directory: work/anykernel
-        run: |
-          set -euxo pipefail
-          # Replace kernel.string if present; otherwise append it.
-          if grep -qE '^kernel\.string=' anykernel.sh; then
-            sed -i -E 's|^kernel\.string=.*|kernel.string="A kernel for S23 QCOM Series by edgarscirulis @ xda-developers and compiled with ksu-next_susfs by Rezoss"|' anykernel.sh
-          else
-            printf '\nkernel.string="A kernel for S23 QCOM Series by edgarscirulis @ xda-developers and compiled with ksu-next_susfs by Rezoss"\n' >> anykernel.sh
-          fi
-          echo "Updated kernel.string:"
-          grep -E '^kernel\.string=' anykernel.sh || true
+          cp -f "${GITHUB_WORKSPACE}/anykernel.sh" "$dest"/
 
       - name: Package kernel with AnyKernel3
         id: package
