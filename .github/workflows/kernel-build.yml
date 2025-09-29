@@ -28,6 +28,39 @@ jobs:
       id-token: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for new commits
+        id: check_changes
+        run: |
+          git fetch origin main
+          LATEST_LOCAL=$(git rev-parse HEAD)
+          LATEST_REMOTE=$(git rev-parse origin/main)
+
+          echo "Latest local:  $LATEST_LOCAL"
+          echo "Latest remote: $LATEST_REMOTE"
+
+          if [ "$LATEST_LOCAL" = "$LATEST_REMOTE" ]; then
+            echo "No new commits detected. Aborting workflow."
+            echo "changed=false" >> $GITHUB_ENV
+            exit 0
+          else
+            echo "New commits found. Proceeding with build."
+            echo "changed=true" >> $GITHUB_ENV
+          fi
+
+      - name: Stop job if no changes
+        if: env.changed == 'false'
+        run: |
+          echo "No changes, stopping workflow..."
+          exit 0
+
+      - name: Build kernel
+        if: env.changed == 'true'
+        run: |
+          echo "There's change let's building kernel..."
+          
       - name: Checkout this repo (patches/workflow only)
         uses: actions/checkout@v4
         with:
@@ -107,10 +140,31 @@ jobs:
         working-directory: work
         run: |
           set -euxo pipefail
-          git clone -b "${KERNEL_BRANCH}" --depth=1 "${KERNEL_REPO}" kernel
+          git clone -b "${KERNEL_BRANCH}" --depth=0 "${KERNEL_REPO}" kernel
           cd kernel
           git rev-parse --short HEAD
+     
+     - name: Merge AOSP kernel/common (android13-5.15-lts)
+       working-directory: work/kernel
+       run: |
+          set -euxo pipefail
+          # Identify the committer for the merge commit
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Fetch only the needed branch tip from AOSP kernel/common
+          git fetch --no-tags https://android.googlesource.com/kernel/common android13-5.15-lts
+
+          # Try fast-forward; if not possible, do a regular merge with no prompt
+          if git merge-base --is-ancestor HEAD FETCH_HEAD; then
+          git merge --ff-only FETCH_HEAD || true
+          else
+          git merge --no-edit --no-ff FETCH_HEAD
+          fi
+
+          # Show what changed
+          git log --oneline -n 5
+     
       - name: Integrate KernelSU-Next
         working-directory: work/kernel
         shell: bash
