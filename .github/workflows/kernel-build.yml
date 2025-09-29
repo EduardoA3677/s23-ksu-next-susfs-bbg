@@ -54,6 +54,23 @@ jobs:
             openjdk-11-jdk pahole dwarves cpio python3 \
             python-is-python3 tar perl wget lz4 make
 
+      - name: Free disk space (reclaim 15–30 GB)
+        run: |
+           set -euxo pipefail
+           df -hT
+
+           # Remove huge preinstalled SDKs/caches you don't use
+           sudo rm -rf /usr/local/lib/android || true
+           sudo rm -rf /usr/share/dotnet || true
+           sudo rm -rf /opt/ghc || true
+           sudo rm -rf /usr/local/share/boost || true
+           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+
+           # Prune docker images & apt caches
+           sudo docker image prune -af || true
+           sudo apt-get clean
+           df -hT
+      
       - name: Setup swap space
         uses: pierotofy/set-swap-space@master
         with:
@@ -261,6 +278,7 @@ jobs:
           (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
           echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          rm -rf $GITHUB_WORKSPACE/work/kernel/out
 
 
       - name: Upload AnyKernel zip (artifact container)
