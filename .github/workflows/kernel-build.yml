@@ -107,7 +107,7 @@ jobs:
         working-directory: work
         run: |
           set -euxo pipefail
-          git clone -b "${KERNEL_BRANCH}" --depth=0 "${KERNEL_REPO}" kernel
+          git clone -b "${KERNEL_BRANCH}" "${KERNEL_REPO}" kernel
           cd kernel
           git rev-parse --short HEAD
      
