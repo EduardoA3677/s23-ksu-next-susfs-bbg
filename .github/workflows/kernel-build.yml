@@ -28,39 +28,6 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check for new commits
-        id: check_changes
-        run: |
-          git fetch origin main
-          LATEST_LOCAL=$(git rev-parse HEAD)
-          LATEST_REMOTE=$(git rev-parse origin/main)
-
-          echo "Latest local:  $LATEST_LOCAL"
-          echo "Latest remote: $LATEST_REMOTE"
-
-          if [ "$LATEST_LOCAL" = "$LATEST_REMOTE" ]; then
-            echo "No new commits detected. Aborting workflow."
-            echo "changed=false" >> $GITHUB_ENV
-            exit 0
-          else
-            echo "New commits found. Proceeding with build."
-            echo "changed=true" >> $GITHUB_ENV
-          fi
-
-      - name: Stop job if no changes
-        if: env.changed == 'false'
-        run: |
-          echo "No changes, stopping workflow..."
-          exit 0
-
-      - name: Build kernel
-        if: env.changed == 'true'
-        run: |
-          echo "There's change let's building kernel..."
-          
       - name: Checkout this repo (patches/workflow only)
         uses: actions/checkout@v4
         with:
