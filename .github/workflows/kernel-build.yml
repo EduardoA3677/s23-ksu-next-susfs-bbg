@@ -7,7 +7,7 @@ on:
   push:
     paths:
       - ".github/workflows/kernel-build.yml"
-      - "rezoss_susfs1.5.10.patch"
+      - "rezoss_susfs1511.patch"
       - "anykernel.sh"
   
 env:
@@ -92,7 +92,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('rezoss_susfs1.5.10.patch') }}
+          key: ccache-${{ runner.os }}-${{ hashFiles('rezoss_susfs1511.patch') }}
           restore-keys: |
             ccache-${{ runner.os }}-
 
@@ -111,28 +111,7 @@ jobs:
           git clone -b "${KERNEL_BRANCH}" "${KERNEL_REPO}" kernel
           cd kernel
           git rev-parse --short HEAD
-     
-      - name: Merge AOSP kernel/common (android13-5.15-lts)
-        working-directory: work/kernel
-        run: |
-          set -euxo pipefail
-          # Identify the committer for the merge commit
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Fetch only the needed branch tip from AOSP kernel/common
-          git fetch --no-tags https://android.googlesource.com/kernel/common android13-5.15-lts
-
-          # Try fast-forward; if not possible, do a regular merge with no prompt
-          if git merge-base --is-ancestor HEAD FETCH_HEAD; then
-          git merge --ff-only FETCH_HEAD || true
-          else
-          git merge --no-edit --no-ff FETCH_HEAD
-          fi
-
-          # Show what changed
-          git log --oneline -n 5
-     
+               
       - name: Integrate KernelSU-Next
         working-directory: work/kernel
         shell: bash
@@ -188,9 +167,9 @@ jobs:
         run: |
           set -euxo pipefail
           if [[ -f "${GITHUB_WORKSPACE}/rezoss_susfs1.5.10.patch" ]]; then
-            patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1.5.10.patch"
+            patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1511.patch"
           else
-            echo "rezoss_susfs1.5.10.patch not found in repo root; skipping." >&2
+            echo "rezoss_susfs1511.patch not found in repo root; skipping." >&2
           fi
 
       - name: Apply Manual Hook patch
@@ -283,7 +262,7 @@ jobs:
             fi
           fi
 
-          # Build final name: common-5.15-191_next1.1.1_ver12869_susfs1.5.10.zip
+          # Build final name
           ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_v${NEXT_VER_CODE}_susfs${SUSFSTAG}.zip"
 
           cd "$AK_DIR"
