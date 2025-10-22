@@ -1,13 +1,13 @@
 name: Build kernel from patches
 
 on:
-  schedule:
-    - cron: '0 4 * * *'  # Runs every day at 04:00 UTC
+  #schedule:
+    #- cron: '0 4 * * *'  # Runs every day at 04:00 UTC
   workflow_dispatch:       # Allow manual trigger if needed
-  push:
+  #push:
     paths:
       - ".github/workflows/kernel-build.yml"
-      - "rezoss_susfs1511.patch"
+      - "rezoss_susfs1512.patch"
       - "anykernel.sh"
   
 env:
@@ -166,10 +166,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          if [[ -f "${GITHUB_WORKSPACE}/rezoss_susfs1.5.10.patch" ]]; then
-            patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1511.patch"
+          if [[ -f "${GITHUB_WORKSPACE}/rezoss_susfs1512.patch" ]]; then
+            patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1512.patch"
           else
-            echo "rezoss_susfs1511.patch not found in repo root; skipping." >&2
+            echo "rezoss_susfs1512.patch not found in repo root; skipping." >&2
           fi
 
       - name: Apply Manual Hook patch
@@ -179,7 +179,7 @@ jobs:
           set -euxo pipefail
           curl -L -o manual-hook.patch "${HOOK_PATCH_URL}"
           patch -p1 --fuzz=3 < manual-hook.patch
-
+          
       - name: Show final diff (for traceability)
         working-directory: work/kernel
         run: |
@@ -263,7 +263,7 @@ jobs:
           fi
 
           # Build final name
-          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_next${NEXT_TAG}_v${NEXT_VER_CODE}_susfs${SUSFSTAG}.zip"
+          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_3d64R_next${NEXT_TAG}_v${NEXT_VER_CODE}_susfs${SUSFSTAG}.zip"
 
           cd "$AK_DIR"
           (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
