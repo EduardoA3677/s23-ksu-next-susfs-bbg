@@ -49,7 +49,11 @@ jobs:
           NEXT_VER_CODE=$((10200 + COMMITS))
           echo "NEXT_VER_CODE=$NEXT_VER_CODE" >> "$GITHUB_ENV"
           cd ..
-
+      
+      - name: Apply the KernelSU Next, SUSFS, manual hooks patch and Baseband Guard
+        run: |
+          cd kernel
+          
           # Integrate latest SUSFS
           git clone -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git
 
