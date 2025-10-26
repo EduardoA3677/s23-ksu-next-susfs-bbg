@@ -1,310 +1,101 @@
-name: Build kernel from patches
-
+# Script github action kanged from Ivan @reddxae with little bit my modification and addition
+name: Build kernel (KSU Next Dev, susfs, scope-minimized manual hooks 1.4 and BBG integration)
 on:
   #schedule:
     #- cron: '0 4 * * *'  # Runs every day at 04:00 UTC
-  workflow_dispatch:       # Allow manual trigger if needed
+  workflow_dispatch: # Allow manual trigger if needed
   push:
     paths:
       - ".github/workflows/kernel-build.yml"
       - "rezoss_susfs1512.patch"
       - "anykernel.sh"
-  
-env:
-  KERNEL_REPO: https://github.com/samsung-sm8550/kernel_samsung_sm8550-common.git
-  KERNEL_BRANCH: android13-5.15
-  KSU_SETUP: https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh
-  KSU_VARIANT: next
-  SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
-  SUSFS_BRANCH: gki-android13-5.15
-  HOOK_PATCH_URL: https://github.com/WildKernels/kernel_patches/raw/f2227a36f02adf3776fc9d432734faf04787f3fa/next/scope_min_manual_hooks_v1.4.patch
-  GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-      actions: read
-      id-token: write
-
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout this repo (patches/workflow only)
+      - name: Checkout the repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Show workspace contents (debug)
-        run: |
-          set -euxo pipefail
-          ls -la
-
-      - name: Set timezone
-        run: sudo timedatectl set-timezone Europe/Warsaw
-        continue-on-error: true
-
-      - name: Setup dependencies
+      - name: Set up the toolchain
         run: |
           sudo apt update
-          sudo apt upgrade -y
           sudo apt install -y \
-            bc bison build-essential ccache curl flex \
-            g++-multilib gcc-multilib git git-lfs gnupg \
-            gperf imagemagick lib32readline-dev lib32z1-dev \
-            libelf-dev liblz4-tool libsdl1.2-dev libssl-dev \
-            libxml2 libxml2-utils lzop pngcrush rsync \
-            schedtool squashfs-tools xsltproc zip zlib1g-dev \
-            openjdk-11-jdk pahole dwarves cpio python3 \
-            python-is-python3 tar perl wget lz4 make
+            bc bison build-essential curl flex \
+            g++-multilib gcc-multilib git gnupg \
+            lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libssl-dev \
+            lzop zlib1g-dev pahole dwarves cpio zip \
+            python3 python-is-python3 tar perl lz4 jq
 
-      - name: Free disk space (reclaim 15–30 GB)
+      - name: Clone source
         run: |
-           set -euxo pipefail
-           df -hT
+          git clone --depth=1 -b android13-5.15 https://github.com/samsung-sm8550/kernel_samsung_sm8550-common.git kernel
 
-           # Remove huge preinstalled SDKs/caches you don't use
-           sudo rm -rf /usr/local/lib/android || true
-           sudo rm -rf /usr/share/dotnet || true
-           sudo rm -rf /opt/ghc || true
-           sudo rm -rf /usr/local/share/boost || true
-           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-
-           # Prune docker images & apt caches
-           sudo docker image prune -af || true
-           sudo apt-get clean
-           df -hT
-      
-      - name: Setup swap space
-        uses: pierotofy/set-swap-space@master
-        with:
-          swap-size-gb: 16
-
-      - name: Configure ccache
+          # Determine the current kernel version
+          echo "KERNEL_VERSION=$(make kernelversion | awk '/^[0-9]/ {print $1}')" >> $GITHUB_ENV
+          
+      - name: Apply the KernelSU Next, SUSFS, manual hooks patch and Baseband Guard
         run: |
-          set -euxo pipefail
-          mkdir -p ~/.ccache
-          {
-            echo 'max_size = 5.0G'
-            echo 'compression = true'
-          } | tee ~/.ccache/ccache.conf
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('rezoss_susfs1511.patch') }}
-          restore-keys: |
-            ccache-${{ runner.os }}-
-
-      - name: Prepare build workspace
-        run: |
-          set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/work"
-          cd "$GITHUB_WORKSPACE/work"
-          git config --global init.defaultBranch main
-          git config --global advice.detachedHead false
-
-      - name: Clone kernel source
-        working-directory: work
-        run: |
-          set -euxo pipefail
-          git clone -b "${KERNEL_BRANCH}" "${KERNEL_REPO}" kernel
           cd kernel
-          git rev-parse --short HEAD
-               
-      - name: Integrate KernelSU-Next
-        working-directory: work/kernel
-        shell: bash
-        run: |
-          set -euxo pipefail
-          curl -LSs "${KSU_SETUP}" | bash -s "${KSU_VARIANT}"
+          # Determine the tag of the latest release of KernelSU Next
+          echo "KSUNEXT_VERSION=$(curl -s "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/tags" | jq -r '.[0].name')" >> $GITHUB_ENV
 
-      - name: Resolve KernelSU-Next TAG and VERSION CODE
-        working-directory: work/kernel
-        shell: bash
-        run: |
-          set -euxo pipefail
-          KSU_DIR="KernelSU-Next"
-
-          # Make sure we have tags and full history for accurate counting
-          (git -C "$KSU_DIR" fetch --tags --force --prune || true)
-          if git -C "$KSU_DIR" rev-parse --is-shallow-repository | grep -q true; then
-            git -C "$KSU_DIR" fetch --unshallow || git -C "$KSU_DIR" fetch --deepen=10000 || true
-          fi
-
-          # Get pure tag (no "-NN-gSHA"), then drop leading 'v'
-          if NEXT_PURE="$(git -C "$KSU_DIR" describe --tags --abbrev=0 2>/dev/null)"; then
-            NEXT_TAG="$NEXT_PURE"
-          else
-            NEXT_RAW="$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || echo HEAD)"
-            NEXT_TAG="${NEXT_RAW%%-*}"
-          fi
-          NEXT_TAG="${NEXT_TAG#v}"
+          # Integrate the latest DEV version of KernelSU Next into the source
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
 
           # Compute version code = commit count + 10200 (same scheme as KernelSU CI)
-          COMMITS="$(git -C "$KSU_DIR" rev-list --count HEAD || echo 0)"
+          COMMITS="$(git -C "./KernelSU-Next" rev-list --count HEAD || echo 0)"
           NEXT_VER_CODE=$((10200 + COMMITS))
-
-          echo "NEXT_TAG=$NEXT_TAG"       >> "$GITHUB_ENV"
           echo "NEXT_VER_CODE=$NEXT_VER_CODE" >> "$GITHUB_ENV"
 
-          echo "Resolved NEXT_TAG=$NEXT_TAG, NEXT_VER_CODE=$NEXT_VER_CODE"
+          # Integrate latest SUSFS
+          git clone -b gki-android13-5.15 --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
 
+          # Determine susfs version
+          cd susfs4ksu
+          SUSFS_COMMIT=$(git rev-parse --short HEAD)
+          SUSFS_VERSION=$(grep -oP '(?<=#define\s+SUSFS_VERSION\s+")[^"]+' kernel_patches/include/susfs.h 2>/dev/null) 
+          echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
+          cd ..
 
-      - name: Fetch susfs4ksu and apply base patch
-        working-directory: work
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git clone -b "${SUSFS_BRANCH}" --depth=1 "${SUSFS_REPO}" susfs4ksu
-          cd kernel
-          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/ || true
-          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/ || true
-
-      - name: Apply your local adjustments
-        working-directory: work/kernel
-        shell: bash
-        run: |
-          set -euxo pipefail
-          if [[ -f "${GITHUB_WORKSPACE}/rezoss_susfs1512.patch" ]]; then
-            patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1512.patch"
-          else
-            echo "rezoss_susfs1512.patch not found in repo root; skipping." >&2
-          fi
-
-      - name: Apply Manual Hook patch
-        working-directory: work/kernel
-        shell: bash
-        run: |
-          set -euxo pipefail
-          curl -L -o manual-hook.patch "${HOOK_PATCH_URL}"
+          # Begin susfs patching
+          cp -rv ./susfs4ksu/kernel_patches/fs/* fs/
+          cp -rv ./susfs4ksu/kernel_patches/include/linux/* include/linux/
+          patch -p1 --fuzz=3 < "${GITHUB_WORKSPACE}/rezoss_susfs1512.patch"
+          
+          # Integrate scope-minimized manual KernelSU hooks via a patch
+          curl -L -o manual-hook.patch https://github.com/WildKernels/kernel_patches/raw/f2227a36f02adf3776fc9d432734faf04787f3fa/next/scope_min_manual_hooks_v1.4.patch
           patch -p1 --fuzz=3 < manual-hook.patch
           echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./arch/arm64/configs/gki_defconfig
-          
 
-      - name: Adding BBG support
-        working-directory: work/kernel
-        shell: bash
-        run: |
-          set -euxo pipefail
+          # Adding BBG support
           wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           echo "CONFIG_BBG=y" >> ./arch/arm64/configs/gki_defconfig
           sed -i 's/\(CONFIG_LSM="[^"]*\)"/\1,baseband_guard"/' ./arch/arm64/configs/gki_defconfig
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' ./security/Kconfig
-          cd ..
-
           
-      - name: Show final diff (for traceability)
-        working-directory: work/kernel
-        run: |
-          set -euxo pipefail
-          git status --porcelain=v1
-          (git diff --stat || true)
 
-      - name: Build kernel (scripts/build.sh)
-        working-directory: work/kernel
-        shell: bash
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CC: ccache clang
+      - name: Set up swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Build the kernel
         run: |
-          set -euxo pipefail
+          cd kernel
           chmod +x scripts/build.sh
           ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-      - name: Collect build outputs
-        id: collect
-        working-directory: work/kernel
+      - name: Package image with AnyKernel3
         run: |
-          set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/out_artifacts"
-          find . -maxdepth 5 -type f \( -name "Image.gz" \) -print -exec cp -v {} "$GITHUB_WORKSPACE/out_artifacts/" \; || true
-          echo "found=$(ls -1 "$GITHUB_WORKSPACE/out_artifacts" | wc -l)" >> $GITHUB_OUTPUT
-      
-      # -------- AnyKernel3 packaging starts here --------
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+          cp -f "${GITHUB_WORKSPACE}/anykernel.sh" anykernel/
 
-      - name: Prepare AnyKernel3 template
-        working-directory: work
-        run: |
-          set -euxo pipefail
-          if [[ -d "${GITHUB_WORKSPACE}/anykernel" ]]; then
-            rsync -a --delete "${GITHUB_WORKSPACE}/anykernel/" anykernel/
-          else
-            git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
-          fi
-          ls -la anykernel
-
-      - name: Copy build outputs into AnyKernel
-        run: |
-          set -euxo pipefail
-          shopt -s nullglob
-          dest="$GITHUB_WORKSPACE/work/anykernel"
-          src="$GITHUB_WORKSPACE/out_artifacts"
-          mkdir -p "$dest"
-          # Copy anything we found (Image, Image.gz, Image.gz-dtb, etc.)
-          for f in "$src"/*; do
-            cp -v "$f" "$dest"/
-          done
-          cp -f "${GITHUB_WORKSPACE}/anykernel.sh" "$dest"/
-
-      - name: Package kernel with AnyKernel3
-        id: package
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          KERNEL_DIR="$GITHUB_WORKSPACE/work/kernel"
-          AK_DIR="$GITHUB_WORKSPACE/work/anykernel"
-
-          VERSION="$(awk -F'= *' '/^VERSION[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
-          PATCHLEVEL="$(awk -F'= *' '/^PATCHLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
-          SUBLEVEL="$(awk -F'= *' '/^SUBLEVEL[ \t]*=/{gsub(/ /,"",$2);print $2;exit}' "$KERNEL_DIR/Makefile")"
-
-          # Resolve SUSFSTAG as before (from local patch name or repo)
-          SUSFSTAG="unknown"
-          if ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch >/dev/null 2>&1; then
-            P="$(ls "$GITHUB_WORKSPACE"/rezoss_susfs*.patch | head -n1)"
-            SUSFSTAG="$(basename "$P" | grep -oE 'susfs[0-9]+(\.[0-9]+)*' | sed 's/^susfs//')"
-          fi
-          if [[ -z "$SUSFSTAG" || "$SUSFSTAG" == "unknown" ]]; then
-            if [[ -d "$GITHUB_WORKSPACE/work/susfs4ksu/.git" ]]; then
-              (git -C "$GITHUB_WORKSPACE/work/susfs4ksu" fetch --tags --force --prune || true)
-              SUSFSTAG="$(git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --abbrev=0 2>/dev/null || \
-                          git -C "$GITHUB_WORKSPACE/work/susfs4ksu" describe --tags --always 2>/dev/null || echo unknown)"
-              SUSFSTAG="${SUSFSTAG#v}"
-              SUSFSTAG="${SUSFSTAG%%-*}"
-            fi
-          fi
-
-          # Build final name
-          ZIP_NAME="common-${VERSION}.${PATCHLEVEL}-${SUBLEVEL}_3d64R_next${NEXT_TAG}_v${NEXT_VER_CODE}_susfs${SUSFSTAG}_BBG.zip"
-
-          cd "$AK_DIR"
-          (shopt -s dotglob; zip -r9 "../${ZIP_NAME}" . -x "*.git*" "README.md" "*placeholder*" ".github/*")
-          echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-          rm -rf $GITHUB_WORKSPACE/work/kernel/out
-
-
-      - name: Upload AnyKernel zip (artifact container)
+      - name: Upload the flashable kernel
         uses: actions/upload-artifact@v4
         with:
-          # IMPORTANT: do NOT end artifact name with ".zip" to avoid "file.zip.zip"
-          name: action_build-${{ github.run_number }}
-          path: ${{ steps.package.outputs.zip_path }}
-          if-no-files-found: error
-
-
-      - name: Create GitHub Release and upload asset
-        if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: run-${{ github.run_id }}         # or your own tag
-          target_commitish: ${{ github.sha }}
-          name: "Kernel Build by ${{ github.repository }}"
-          generate_release_notes: true
-          files: ${{ steps.package.outputs.zip_path }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}    
-          
+          name: common-${KERNEL_VERSION}_3d64R_next${KSUNEXT_VERSION}-${NEXT_VER_CODE}_susfs${SUSFS_VERSION}-manual-BBG
+          path: anykernel/
