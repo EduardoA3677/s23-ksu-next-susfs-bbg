@@ -50,7 +50,7 @@ jobs:
           echo "NEXT_VER_CODE=$NEXT_VER_CODE" >> "$GITHUB_ENV"
 
           # Integrate latest SUSFS
-          git clone -b gki-android13-5.15 --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          git clone --depth=1 -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
 
           # Determine susfs version
           cd susfs4ksu
