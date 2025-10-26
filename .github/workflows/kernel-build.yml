@@ -48,6 +48,7 @@ jobs:
           COMMITS="$(git -C "./KernelSU-Next" rev-list --count HEAD || echo 0)"
           NEXT_VER_CODE=$((10200 + COMMITS))
           echo "NEXT_VER_CODE=$NEXT_VER_CODE" >> "$GITHUB_ENV"
+          cd ..
 
           # Integrate latest SUSFS
           git clone --depth=1 -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
