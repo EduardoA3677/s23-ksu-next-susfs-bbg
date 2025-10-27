@@ -56,7 +56,7 @@ jobs:
           # Determine susfs version
           cd susfs4ksu
           SUSFS_COMMIT=$(git rev-parse --short HEAD)
-          SUSFS_VERSION=$(grep -oP '(?<=#define\s+SUSFS_VERSION\s+")[^"]+' ./kernel_patches/include/susfs.h 2>/dev/null) 
+          SUSFS_VERSION=$(grep -Po '(?<=#define\s+SUSFS_VERSION\s+")v?\K[0-9.]+' kernel_patches/include/linux/susfs.h | tr -d '.')
           echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
           cd ..
 
