@@ -8,7 +8,7 @@ on:
     paths:
       - ".github/workflows/kernel-build.yml"
       - "rezoss_susfs1512.patch"
-      - "anykernel.sh"
+      - "anykernel.zip"
 
 jobs:
   build:
@@ -91,9 +91,8 @@ jobs:
 
       - name: Package image with AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          unzip "${GITHUB_WORKSPACE}/anykernel.zip" -d anykernel/
           cp kernel/out/arch/arm64/boot/Image.gz anykernel/
-          cp -f "${GITHUB_WORKSPACE}/anykernel.sh" anykernel/
 
       - name: Upload the flashable kernel
         uses: actions/upload-artifact@v4
