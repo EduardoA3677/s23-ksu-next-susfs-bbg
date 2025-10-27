@@ -98,9 +98,9 @@ jobs:
           unzip "${GITHUB_WORKSPACE}/anykernel.zip" -d anykernel/
           cp kernel/out/arch/arm64/boot/Image.gz anykernel/
           # Build final name
-          ZIP_NAME="common-${KERNEL_VERSION}_3d64R_next${KSUNEXT_VERSION}-${NEXT_VER_CODE}_susfs${SUSFS_VERSION}-${SUSFS_COMMIT}-manual-BBG.zip"
+          ZIP_NAME="common-5.15.${KERNEL_VERSION}-3d64R-next${KSUNEXT_VERSION}_${NEXT_VER_CODE}-susfs${SUSFS_VERSION}_${SUSFS_COMMIT}-manual-BBG"
           cd anykernel
-          zip -r0 ../"${ZIP_NAME}" ./*
+          zip -r0 ../"${ZIP_NAME}".zip ./*
           echo "zip_path=$GITHUB_WORKSPACE/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           cd ..
