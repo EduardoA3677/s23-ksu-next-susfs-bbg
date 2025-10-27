@@ -58,6 +58,7 @@ jobs:
           SUSFS_COMMIT=$(git rev-parse --short HEAD)
           SUSFS_VERSION=$(grep -Po '(?<=#define\s+SUSFS_VERSION\s+")v?\K[0-9.]+' kernel_patches/include/linux/susfs.h | tr -d '.')
           echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
+          echo "SUSFS_COMMIT=$SUSFS_COMMIT" >> "$GITHUB_ENV"
           cd ..
 
           # Begin susfs patching
