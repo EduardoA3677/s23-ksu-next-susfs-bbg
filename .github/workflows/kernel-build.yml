@@ -91,12 +91,32 @@ jobs:
           ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
       - name: Package image with AnyKernel3
+        id: package
         run: |
           unzip "${GITHUB_WORKSPACE}/anykernel.zip" -d anykernel/
           cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+          # Build final name
+          ZIP_NAME="common-${KERNEL_VERSION}_3d64R_next${KSUNEXT_VERSION}-${NEXT_VER_CODE}_susfs${SUSFS_VERSION}-${SUSFS_COMMIT}-manual-BBG.zip"
+          cd anykernel
+          zip -r0 "../${ZIP_NAME}" .
+          echo "zip_path=$GITHUB_WORKSPACE/work/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          cd ..
 
       - name: Upload the flashable kernel
         uses: actions/upload-artifact@v4
         with:
-          name: common-${KERNEL_VERSION}_3d64R_next${KSUNEXT_VERSION}-${NEXT_VER_CODE}_susfs${SUSFS_VERSION}-${SUSFS_COMMIT}-manual-BBG
+          name: ${{steps.package.outputs.zip_name}}
           path: anykernel/
+      
+      - name: Create GitHub Release and upload asset
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: experimental_build-${{ github.run_id }} 
+          target_commitish: ${{ github.sha }}
+          name: "Kernel Build by ${{ github.repository }}"
+          generate_release_notes: true
+          files: ${{ steps.package.outputs.zip_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   
