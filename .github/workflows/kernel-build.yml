@@ -56,7 +56,7 @@ jobs:
           # Determine susfs version
           cd susfs4ksu
           SUSFS_COMMIT=$(git rev-parse --short HEAD)
-          SUSFS_VERSION=$(grep -oP '(?<=#define\s+SUSFS_VERSION\s+")[^"]+' kernel_patches/include/susfs.h 2>/dev/null) 
+          SUSFS_VERSION=$(grep -oP '(?<=#define\s+SUSFS_VERSION\s+")[^"]+' ./kernel_patches/include/susfs.h 2>/dev/null) 
           echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
           cd ..
 
@@ -98,5 +98,5 @@ jobs:
       - name: Upload the flashable kernel
         uses: actions/upload-artifact@v4
         with:
-          name: common-${KERNEL_VERSION}_3d64R_next${KSUNEXT_VERSION}-${NEXT_VER_CODE}_susfs${SUSFS_VERSION}-manual-BBG
+          name: common-${KERNEL_VERSION}_3d64R_next${KSUNEXT_VERSION}-${NEXT_VER_CODE}_susfs${SUSFS_VERSION}-${SUSFS_COMMIT}-manual-BBG
           path: anykernel/
