@@ -37,6 +37,7 @@ jobs:
           
       - name: Apply the KernelSU Next, SUSFS, manual hooks patch and Baseband Guard
         run: |
+          set -euxo pipefail
           cd kernel
           # Determine the tag of the latest release of KernelSU Next
           echo "KSUNEXT_VERSION=$(curl -s "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/tags" | jq -r '.[0].name')" >> $GITHUB_ENV
@@ -93,6 +94,7 @@ jobs:
       - name: Package image with AnyKernel3
         id: package
         run: |
+          set -euxo pipefail
           unzip "${GITHUB_WORKSPACE}/anykernel.zip" -d anykernel/
           cp kernel/out/arch/arm64/boot/Image.gz anykernel/
           # Build final name
